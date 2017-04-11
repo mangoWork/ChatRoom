@@ -2,6 +2,7 @@ var api_ai = require('apiai');
 console.log('Using tkn : ', process.env.CLIENT_TKN)
 var app = api_ai(process.env.CLIENT_TKN);
 var uuid = require('node-uuid');
+var search_rackspace = require('./search_rack');
 var active_session = {};
 var online_users;
 var bot_user = {
@@ -45,18 +46,42 @@ module.exports = function (socket, ol_users) {
 
   socket.on('send-message', function (data, callback) {
     console.log(data)
-    if (active_session[data.username]) {
-      askServer(data, active_session[data.username])
-    } else {
-      var session_id = uuid.v4()
-      var options = {
-        sessionId: session_id,
-        username: data.username
-      };
-      active_session[data.username] = options
-      askServer(data, options);
+    if (!preDefinedResponse(data)) {
+      if (active_session[data.username]) {
+        askServer(data, active_session[data.username])
+      } else {
+        var session_id = uuid.v4()
+        var options = {
+          sessionId: session_id,
+          username: data.username
+        };
+        active_session[data.username] = options
+        askServer(data, options);
+      }
     }
   })
+}
+
+function preDefinedResponse(data) {
+  var search_cmd = 'search for';
+  if (data.msg.indexOf('looking for') == 0 || data.msg.indexOf(search_cmd) == 0) {
+    data.msg = data.msg.replace(search_cmd, '').trim();
+    search_rackspace(data.msg, function (response) {
+      if (response && response.length > 0) {
+        sendResponse("Here is what I found...", data.username)
+        for (var i = 0; i < response.length; i++) {
+          var res_msg = response[i].title + '\n'
+          res_msg += response[i].excerpt + '\n'
+          res_msg += 'More info on : ' + response[i].link
+          sendResponse(res_msg, data.username)
+        }
+      }
+      console.log(response)
+    })
+    return true;
+  } else {
+    return false
+  }
 }
 
 function askServer(data, options, cb) {
