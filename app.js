@@ -7,6 +7,9 @@ var fs = require('fs'); // fs module for handling file operations
 var server = http.createServer(app); // creating server
 var io = require('socket.io'); // using sockets
 var ios = io.listen(server); // listening sockets
+setTimeout(function () {
+  require('./conv')(ios);
+}, 3000);
 var formidable = require('formidable'); // file upload module
 var util = require('util');
 
@@ -49,79 +52,6 @@ app.use(function (req, res, next) {
   next();
 });
 
-//sockets handling
-ios.on('connection', function (socket) {
-  var nickname = [];
-  require('./conv')(socket, nickname);
-  // creating new user if nickname doesn't exists
-  
-
-  // sending online members list
-  socket.on('get-online-members', function (data) {
-    var online_member = [];
-    i = Object.keys(nickname);
-    for (var j = 0; j < i.length; j++) {
-      socket_id = i[j];
-      socket_data = nickname[socket_id];
-      temp1 = {
-        "username": socket_data.username,
-        "userAvatar": socket_data.userAvatar
-      };
-      online_member.push(temp1);
-    }
-    ios.sockets.emit('online-members', online_member);
-  });
-
-  // sending new message
-  socket.on('send-message', function (data, callback) {
-    if (nickname[data.username]) {
-      if (data.hasMsg) {
-        ios.sockets.emit('new message', data);
-        callback({
-          success: true
-        });
-      } else if (data.hasFile) {
-        if (data.istype == "image") {
-          socket.emit('new message image', data);
-          callback({
-            success: true
-          });
-        } else if (data.istype == "music") {
-          socket.emit('new message music', data);
-          callback({
-            success: true
-          });
-        } else if (data.istype == "PDF") {
-          socket.emit('new message PDF', data);
-          callback({
-            success: true
-          });
-        }
-      } else {
-        callback({
-          success: false
-        });
-      }
-    }
-  });
-
-  // disconnect user handling
-  socket.on('disconnect', function () {
-    delete nickname[socket.username];
-    online_member = [];
-    x = Object.keys(nickname);
-    for (var k = 0; k < x.length; k++) {
-      socket_id = x[k];
-      socket_data = nickname[socket_id];
-      temp1 = {
-        "username": socket_data.username,
-        "userAvatar": socket_data.userAvatar
-      };
-      online_member.push(temp1);
-    }
-    ios.sockets.emit('online-members', online_member);
-  });
-});
 
 // route for uploading images asynchronously
 app.post('/v1/uploadImage', function (req, res) {
