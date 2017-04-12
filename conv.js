@@ -4,7 +4,6 @@ console.log('Using tkn : ', process.env.CLIENT_TKN)
 var app = api_ai(process.env.CLIENT_TKN);
 var uuid = require('node-uuid');
 var search_rackspace = require('./search_rack');
-var active_session = {};
 var bot_user = {
   username: 'Bot agent',
   userAvatar: 'avatar5.png',
@@ -17,6 +16,7 @@ var response_handler = new EventEmitter();
 
 function ConversationManager(ios) {
   var self = this;
+  self.active_session = {};
   self.online_users = {
     'bot_user': bot_user
   }
@@ -34,9 +34,19 @@ ConversationManager.prototype.sendResponse = function (msg, username) {
   }
 }
 
-ConversationManager.prototype.addAgent = function (socket) {
+ConversationManager.prototype.addAgent = function (socket, from_username) {
   this.online_users[socket.username] = socket;
   socket.join('all_user');
+  console.log(this.active_session[from_username])
+  if (this.active_session[from_username]) {
+    var pending_msg = this.active_session[from_username].msg
+    if (pending_msg && pending_msg.length > 0) {
+      for (var i = 0; i < pending_msg.length; i++) {
+        this.sendResponse(pending_msg[i], socket.username)
+      }
+      this.active_session[from_username].msg = []
+    }
+  }
   this.bot_user = this.online_users['bot_user'];
   delete this.online_users['bot_user'];
   this.publishOnlineMember();
@@ -90,15 +100,16 @@ ConversationManager.prototype.addUserToChat = function (socket) {
       return;
     }
     console.log('bot processing...')
-    if (active_session[data.username]) {
-      self.askServer(data, active_session[data.username])
+    if (self.active_session[data.username]) {
+      self.askServer(data, self.active_session[data.username])
     } else {
       var session_id = uuid.v4()
       var options = {
         sessionId: session_id,
-        username: data.username
+        username: data.username,
+        msg: []
       };
-      active_session[data.username] = options
+      self.active_session[data.username] = options
       self.askServer(data, options);
     }
   })
@@ -182,23 +193,35 @@ ConversationManager.prototype.askServer = function (data, options) {
     if (response.status.code == 200) {
       console.log('Response question : ', response.result.fulfillment.speech)
       if (response.result.actionIncomplete) {
-        self.sendResponse(response.result.fulfillment.speech, options.username)
+        self.sendResponse(response.result.fulfillment.speech, data.username)
       } else {
         // processed with action if it completed or throw the next question
-        console.log('User completed : ', active_session[options.username])
+        console.log('User completed : ', self.active_session[data.username])
         console.log('Ans : ', response.result.parameters)
         console.log('Action req : ', response.result.action)
+        if (response.result.action.indexOf('input.welcome') == 0) {
+          var msg = 'Client Info \nName : ' + response.result.parameters.name + '\n' +
+            'Email : ' + response.result.parameters.email + '\n' +
+            'Company Name : ' + response.result.parameters.company_name;
+          self.active_session[data.username].msg.push(msg);
+        }
+        if (response.result.action.indexOf('migrate') == 0) {
+          var msg = 'Business Info\nCloud provider : ' + response.result.parameters.cloud_provider + '\n' +
+            'Server Type : ' + response.result.parameters.server_type + '\n' +
+            'Consuming resources : ' + response.result.parameters.resource_type.toString();
+          self.active_session[data.username].msg.push(msg);
+        }
         if (response.result.fulfillment.speech) {
-          self.sendResponse(response.result.fulfillment.speech, options.username)
+          self.sendResponse(response.result.fulfillment.speech, data.username)
         }
         if (response.result.action) {
-          delete active_session[data.username]
-          response_handler.emit(response.result.action, response.result.parameters, options.username)
+          // delete self.active_session[data.username]
+          response_handler.emit(response.result.action, response.result.parameters, data.username)
         }
       }
     } else {
       console.log('Some thing went wrong', response);
-      self.sendResponse('i am not feeling well !', options.username)
+      self.sendResponse('i am not feeling well !', data.username)
     }
   });
   request.on('error', function (error) {
@@ -214,7 +237,7 @@ response_handler.on('intro', function (data, username) {
 })
 
 response_handler.on('general_search', function (data, username) {
-  console.log('general_search',username, data)
+  console.log('general_search', username, data)
   search_rackspace.general_search(data.search_query, function (response) {
     if (response && response.length > 0) {
       conv_manager.sendResponse("Here is what I found...", username)
@@ -231,11 +254,11 @@ response_handler.on('general_search', function (data, username) {
 response_handler.on('migrate', function (data, username) {
   console.log('help migrate', data)
   var agent_socket = conv_manager.online_agent_users.pop()
-  conv_manager.addAgent(agent_socket);
+  conv_manager.addAgent(agent_socket, username);
 })
 
 response_handler.on('support', function (data, username) {
-  console.log('support',username, data)
+  console.log('support', username, data)
   search_rackspace.general_search(data.search_query, function (response) {
     console.log(response)
     if (response && response.length > 0) {
